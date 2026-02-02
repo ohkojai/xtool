@@ -78,21 +78,24 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
         let existingCapabilitiesList = try await context.developerAPIClient
             .bundleIdsBundleIdCapabilitiesGetToManyRelated(.init(path: .init(id: appID.id)))
             .ok.body.json.data
-        let existingCapabilities = [Components.Schemas.CapabilityType: Components.Schemas.BundleIdCapability](
+        // Key on value1 only — Apple's API populates value2 (raw string) but
+        // locally-constructed CapabilityTypes only have value1 set, causing
+        // mismatches when using the full struct as a dictionary key.
+        let existingCapabilities = [Components.Schemas.CapabilityType.Value1Payload: Components.Schemas.BundleIdCapability](
             existingCapabilitiesList.compactMap { cap in
-                (cap.attributes?.capabilityType).map { ($0, cap) }
+                cap.attributes?.capabilityType?.value1.map { ($0, cap) }
             },
             uniquingKeysWith: { $1 }
         )
 
         let wantedCapabilitiesList = try entitlements.entitlements().compactMap(\.anyCapability)
-        let wantedCapabilities = [Components.Schemas.CapabilityType: [Components.Schemas.CapabilitySetting]](
-            wantedCapabilitiesList.map { ($0.capabilityType, $0.settings ?? []) },
+        let wantedCapabilities = [Components.Schemas.CapabilityType.Value1Payload: [Components.Schemas.CapabilitySetting]](
+            wantedCapabilitiesList.compactMap { cap in
+                cap.capabilityType.value1.map { ($0, cap.settings ?? []) }
+            },
             uniquingKeysWith: { $1 }
         )
 
-        print("[xtool-debug] existingCapabilities: \(existingCapabilities.keys.map { String(describing: $0) })")
-        print("[xtool-debug] wantedCapabilities: \(wantedCapabilities.keys.map { String(describing: $0) })")
         for (typ, cap) in existingCapabilities {
             if let wantedSettings = wantedCapabilities[typ] {
                 if wantedSettings != (cap.attributes?.settings ?? []) {
@@ -104,7 +107,7 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
                                     _type: .bundleIdCapabilities,
                                     id: cap.id,
                                     attributes: .init(
-                                        capabilityType: typ,
+                                        capabilityType: cap.attributes?.capabilityType,
                                         settings: wantedSettings
                                     )
                                 )
@@ -116,22 +119,13 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
             } else {
                 // DeveloperServices doesn't allow deleting these capabilities
                 let requiredCapabilities: Set<Components.Schemas.CapabilityType.Value1Payload> = [.inAppPurchase]
-                if let capType = cap.attributes?.capabilityType?.value1, !requiredCapabilities.contains(capType) {
-                    print("[xtool-debug] Deleting capability: \(cap.id) (type: \(String(describing: capType)))")
+                if !requiredCapabilities.contains(typ) {
                     let response = try await context.developerAPIClient
                         .bundleIdCapabilitiesDeleteInstance(path: .init(id: cap.id))
-                    print("[xtool-debug] Delete response: \(response)")
                     switch response {
-                    case .noContent:
-                        print("[xtool-debug] Got .noContent")
-                    case .notFound:
-                        print("[xtool-debug] Got .notFound")
-                    case .conflict:
-                        print("[xtool-debug] Got .conflict")
-                    case .undocumented(let statusCode, _):
-                        print("[xtool-debug] Got .undocumented(\(statusCode))")
+                    case .noContent, .notFound:
+                        break
                     default:
-                        print("[xtool-debug] Got unexpected case")
                         _ = try response.noContent
                     }
                 }
@@ -139,11 +133,12 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
         }
         for (typ, settings) in wantedCapabilities {
             guard existingCapabilities[typ] == nil else { continue }
+            let capabilityType = Components.Schemas.CapabilityType(value1: typ)
             _ = try await context.developerAPIClient.bundleIdCapabilitiesCreateInstance(
                 body: .json(.init(data: .init(
                     _type: .bundleIdCapabilities,
                     attributes: .init(
-                        capabilityType: typ,
+                        capabilityType: capabilityType,
                         settings: settings
                     ),
                     relationships: .init(
@@ -153,11 +148,10 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
                                 id: appID.id
                             )
                         ),
-                        // not public but required when using ds2 API
                         capability: .init(
                             data: .init(
                                 _type: .capabilities,
-                                id: typ
+                                id: capabilityType
                             )
                         )
                     )
