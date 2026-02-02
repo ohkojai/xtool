@@ -49,7 +49,7 @@ public struct DeveloperServicesFetchCertificateOperation: DeveloperServicesOpera
         let csr = try keypair.generateCSR()
         let privateKey = try keypair.privateKey()
 
-        let response = try await context.developerAPIClient.certificatesCreateInstance(
+        let createRequest = Operations.CertificatesCreateInstance.Input(
             body: .json(.init(data: .init(
                 _type: .certificates,
                 attributes: .init(
@@ -58,6 +58,26 @@ public struct DeveloperServicesFetchCertificateOperation: DeveloperServicesOpera
                 )
             )))
         )
+
+        var response = try await context.developerAPIClient.certificatesCreateInstance(createRequest)
+
+        if case .conflict = response {
+            // A development certificate already exists but we don't have its
+            // private key. Revoke development certs and retry.
+            let certs = try await context.developerAPIClient
+                .certificatesGetCollection().ok.body.json.data
+            let devTypes: Set<Components.Schemas.CertificateType.Value1Payload> = [
+                .development, .iosDevelopment, .macAppDevelopment,
+            ]
+            for cert in certs {
+                if let certType = cert.attributes?.certificateType?.value1, devTypes.contains(certType) {
+                    _ = try? await context.developerAPIClient
+                        .certificatesDeleteInstance(path: .init(id: cert.id))
+                        .noContent
+                }
+            }
+            response = try await context.developerAPIClient.certificatesCreateInstance(createRequest)
+        }
 
         guard let contentString = try response.created.body.json.data.attributes?.certificateContent,
               let contentData = Data(base64Encoded: contentString)
@@ -72,8 +92,8 @@ public struct DeveloperServicesFetchCertificateOperation: DeveloperServicesOpera
         _ certificates: [DeveloperServicesCertificate],
         requireConfirmation: Bool
     ) async throws -> SigningInfo {
-        if !certificates.isEmpty {
-            if requireConfirmation {
+        if try await context.auth.team()?.isFree == true {
+            if !certificates.isEmpty, requireConfirmation {
                 guard await confirmRevocation(certificates)
                     else { throw CancellationError() }
             }
