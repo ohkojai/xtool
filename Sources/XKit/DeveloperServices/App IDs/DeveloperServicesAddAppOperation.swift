@@ -115,9 +115,23 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
                 // DeveloperServices doesn't allow deleting these capabilities
                 let requiredCapabilities: Set<Components.Schemas.CapabilityType.Value1Payload> = [.inAppPurchase]
                 if let capType = cap.attributes?.capabilityType?.value1, !requiredCapabilities.contains(capType) {
-                    _ = try await context.developerAPIClient
+                    print("[xtool-debug] Deleting capability: \(cap.id) (type: \(String(describing: capType)))")
+                    let response = try await context.developerAPIClient
                         .bundleIdCapabilitiesDeleteInstance(path: .init(id: cap.id))
-                        .noContent
+                    print("[xtool-debug] Delete response: \(response)")
+                    switch response {
+                    case .noContent:
+                        print("[xtool-debug] Got .noContent")
+                    case .notFound:
+                        print("[xtool-debug] Got .notFound")
+                    case .conflict:
+                        print("[xtool-debug] Got .conflict")
+                    case .undocumented(let statusCode, _):
+                        print("[xtool-debug] Got .undocumented(\(statusCode))")
+                    default:
+                        print("[xtool-debug] Got unexpected case")
+                        _ = try response.noContent
+                    }
                 }
             }
         }
