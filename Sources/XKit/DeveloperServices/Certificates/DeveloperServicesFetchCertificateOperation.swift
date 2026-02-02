@@ -72,8 +72,8 @@ public struct DeveloperServicesFetchCertificateOperation: DeveloperServicesOpera
         _ certificates: [DeveloperServicesCertificate],
         requireConfirmation: Bool
     ) async throws -> SigningInfo {
-        if try await context.auth.team()?.isFree == true {
-            if !certificates.isEmpty, requireConfirmation {
+        if !certificates.isEmpty {
+            if requireConfirmation {
                 guard await confirmRevocation(certificates)
                     else { throw CancellationError() }
             }
