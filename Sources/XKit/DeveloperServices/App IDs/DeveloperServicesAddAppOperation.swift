@@ -91,6 +91,8 @@ public struct DeveloperServicesAddAppOperation: DeveloperServicesOperation {
             uniquingKeysWith: { $1 }
         )
 
+        print("[xtool-debug] existingCapabilities: \(existingCapabilities.keys.map { String(describing: $0) })")
+        print("[xtool-debug] wantedCapabilities: \(wantedCapabilities.keys.map { String(describing: $0) })")
         for (typ, cap) in existingCapabilities {
             if let wantedSettings = wantedCapabilities[typ] {
                 if wantedSettings != (cap.attributes?.settings ?? []) {
